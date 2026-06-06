@@ -1,0 +1,5 @@
+.env
+__pycache__/
+*.pyc
+data/final_results/
+data/raw_claims/

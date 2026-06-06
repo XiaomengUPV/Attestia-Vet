@@ -1,0 +1,56 @@
+[
+  {
+    "simple": "Ear cytology",
+    "complex": "Ear cytology and flush",
+    "diagnosis_context": ["dental", "periodontal", "tooth", "ear"],
+    "explanation": "Ear cytology and flush is an upcoded version of simple ear cytology"
+  },
+  {
+    "simple": "Weight check",
+    "complex": "Annual wellness exam",
+    "diagnosis_context": ["wellness", "health check", "preventive"],
+    "explanation": "Weight check is a component of wellness exam, not a separate billable procedure"
+  },
+  {
+    "simple": "Venipuncture",
+    "complex": "IV catheter placement",
+    "diagnosis_context": ["wellness", "health check", "preventive"],
+    "explanation": "Venipuncture is the simple blood draw, IV catheter placement is more complex and not needed for routine wellness"
+  },
+  {
+    "simple": "Single radiograph view",
+    "complex": "Radiograph series (3+ views)",
+    "diagnosis_context": ["fracture", "hip", "cruciate", "orthopedic"],
+    "explanation": "Single view is insufficient for fracture assessment; multiple views are standard of care"
+  },
+  {
+    "simple": "Urinalysis",
+    "complex": "Comprehensive metabolic panel",
+    "diagnosis_context": ["wellness", "health check", "preventive"],
+    "explanation": "Comprehensive metabolic panel is excessive for routine wellness where urinalysis would suffice"
+  },
+  {
+    "simple": "White blood cell count",
+    "complex": "Complete blood count panel",
+    "diagnosis_context": ["wellness", "health check", "preventive", "illness"],
+    "explanation": "WBC count alone cannot be billed when CBC panel is performed"
+  },
+  {
+    "simple": "Red blood cell count",
+    "complex": "Complete blood count panel",
+    "diagnosis_context": ["wellness", "health check", "preventive", "illness"],
+    "explanation": "RBC count alone cannot be billed when CBC panel is performed"
+  },
+  {
+    "simple": "Liver enzyme test",
+    "complex": "Comprehensive metabolic panel",
+    "diagnosis_context": ["wellness", "health check", "preventive"],
+    "explanation": "Liver enzyme test is included in comprehensive metabolic panel"
+  },
+  {
+    "simple": "Kidney function test",
+    "complex": "Comprehensive metabolic panel",
+    "diagnosis_context": ["wellness", "health check", "preventive"],
+    "explanation": "Kidney function test is included in comprehensive metabolic panel"
+  }
+]
