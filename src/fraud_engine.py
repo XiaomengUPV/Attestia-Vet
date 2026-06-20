@@ -35,6 +35,18 @@ def process_claim(claim: dict, model: str = None, verbose: bool = False) -> dict
     }
 
     t_start = time.time()
+    
+    # ── Agent 0: Document Integrity (only runs if a PDF is attached) ─────────
+    if claim.get("pdf_path"):
+        from document_integrity_checker import run_agent_zero
+        doc_result = run_agent_zero(claim["pdf_path"], verbose=verbose)
+        if doc_result["fraud_detected"]:
+            audit["final_verdict"] = True
+            audit["final_fraud_type"] = doc_result["fraud_type"]
+            audit["deciding_agent"] = "document_integrity_checker"
+            audit["processing_time_ms"] = int((time.time() - t_start) * 1000)
+            audit["agent0_result"] = doc_result
+            return audit
 
     # ── Agent 1: Rule checker (deterministic for basic fraud) ──
     a1 = rule_checker.run(claim)
