@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 data/final_results/
 data/raw_claims/
+API key*
+*.docx
+.env
