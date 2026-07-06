@@ -49,6 +49,11 @@ def main():
         use_fast = False
         print(f"Using Sonnet model (high accuracy mode)")
 
+    # Propagate model choice to the clinical reasoner (the graph nodes
+    # call clinical_reasoner.run() which reads clinical_reasoner.MODEL)
+    import clinical_reasoner
+    clinical_reasoner.MODEL = model
+
     if args.generate or not CLAIMS_PATH.exists():
         print("Generating synthetic claims dataset...")
         claims = generate_claims.generate_claims()

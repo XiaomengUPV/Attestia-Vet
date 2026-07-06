@@ -134,13 +134,13 @@ if __name__ == "__main__":
         import sys
         sys.exit(1)
 
-    with open(results_path) as f:
+    with open(results_path, encoding="utf-8") as f:
         results = json.load(f)
 
     metrics = compute_metrics(results)
     print_report(metrics)
 
     metrics_path = Path(__file__).parent.parent / "data" / "final_results" / "metrics.json"
-    with open(metrics_path, "w") as f:
+    with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
     print(f"\nMetrics saved to {metrics_path}")

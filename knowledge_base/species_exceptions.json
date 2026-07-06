@@ -1,0 +1,18 @@
+[
+  {"procedure": "TPLO surgery", "species": ["cat"],
+   "diagnosis_context": ["cranial cruciate ligament rupture", "fracture", "hip dysplasia"],
+   "rationale": "TPLO is a recognized surgical technique for feline cruciate ligament disease, though far less common than in dogs",
+   "source": "ACVS feline orthopedic guidelines"},
+  {"procedure": "Echocardiogram complete", "species": ["bird", "reptile"],
+   "diagnosis_context": ["dilated cardiomyopathy", "pericardial effusion", "mitral valve disease", "heart murmur"],
+   "rationale": "Advanced cardiac imaging is performed on avian and large reptile patients by exotic-animal specialists",
+   "source": "Association of Avian Veterinarians; Journal of Herpetological Medicine"},
+  {"procedure": "Chemotherapy", "species": ["bird", "reptile"],
+   "diagnosis_context": ["lymphoma", "mast cell tumor", "splenic mass", "neoplasia"],
+   "rationale": "Chemotherapy protocols exist for avian and reptile oncology at specialized exotic-animal centers",
+   "source": "Association of Avian Veterinarians"},
+  {"procedure": "General anesthesia", "species": ["reptile"],
+   "diagnosis_context": ["fracture", "surgery", "diagnostic imaging", "mass"],
+   "rationale": "Reptiles safely receive injectable and inhalant anesthesia with appropriate monitoring",
+   "source": "Journal of Herpetological Medicine"}
+]

@@ -74,6 +74,8 @@ DIAGNOSES = {
     "renal":      ["Chronic kidney disease stage 4", "Acute kidney injury"],
     "ophthalmic": ["Glaucoma", "Cataracts", "Uveitis"],
     "gi":         ["Hepatic lipidosis", "Inflammatory bowel disease", "Anorexia (severe)"],
+    "minor_visit": ["Weight recheck only", "Suture removal visit",
+                    "Routine urine screening", "Nail trim visit"],
 }
 
 
@@ -123,18 +125,32 @@ def generate_claims():
         return _id
 
     # 1. LEGITIMATE (200)
+    # Each scenario is constrained to species it is clinically valid for.
+    # Cat-TPLO and bird/reptile cardiology/oncology are DELIBERATE edge cases:
+    # rare-but-legitimate specialist care, covered by the species-exceptions KB
+    # and adjudicated by the reasoning agents rather than hard rules.
+    legit_scenarios = [
+        ("wellness",   ["Annual wellness exam", "Rabies vaccine", "DHPP vaccine"],
+                       ["dog"]),
+        ("wellness",   ["Annual wellness exam", "Rabies vaccine",
+                        "Feline leukemia vaccine"],
+                       ["cat"]),
+        ("dental",     ["Comprehensive dental cleaning", "General anesthesia"],
+                       ["dog", "cat", "rabbit"]),
+        ("oncology",   ["Chemotherapy", "Complete blood count panel"],
+                       ["dog", "dog", "cat", "cat", "bird", "reptile"]),
+        ("cardiac",    ["Echocardiogram complete", "Blood pressure measurement"],
+                       ["dog", "dog", "cat", "cat", "bird", "reptile"]),
+        ("endocrine",  ["Insulin therapy", "Comprehensive metabolic panel"],
+                       ["dog", "cat"]),
+        ("orthopedic", ["TPLO surgery", "General anesthesia",
+                        "Radiograph series (3+ views)"],
+                       ["dog", "dog", "dog", "cat"]),
+    ]
     for _ in range(200):
-        species, breed = pick_species_breed()
-        scenario = random.choice([
-            ("wellness",   ["Annual wellness exam", "Rabies vaccine", "DHPP vaccine"]),
-            ("dental",     ["Comprehensive dental cleaning", "General anesthesia"]),
-            ("oncology",   ["Chemotherapy", "Complete blood count panel"]),
-            ("cardiac",    ["Echocardiogram complete", "Blood pressure measurement"]),
-            ("endocrine",  ["Insulin therapy", "Comprehensive metabolic panel"]),
-            ("orthopedic", ["TPLO surgery", "General anesthesia",
-                            "Radiograph series (3+ views)"]),
-        ])
-        diag_key, procs = scenario
+        diag_key, procs, valid_species = random.choice(legit_scenarios)
+        species = random.choice(valid_species)
+        breed = random.choice(SPECIES_BREEDS[species]["breeds"])
         diagnosis = random.choice(DIAGNOSES[diag_key])
         claims.append(make_claim(nid(), species, breed, diagnosis, procs, None, False))
 
@@ -167,21 +183,25 @@ def generate_claims():
                                  [p1, p2], "Unbundling", True,
                                  billed_override=round(total * 1.05, 2)))
 
-    # 4. UPCODING (60) - CORRECTED VERSION
-    # Only include TRUE upcoding cases (not legitimate medical practices)
+    # 4. UPCODING (60)
+    # The observable trace of upcoding: the visit reason on the claim justifies
+    # only a simple service, but a substantially more intensive service is
+    # billed. (A wellness diagnosis with a wellness exam is NOT detectable —
+    # the diagnosis must be narrower than the billed service.)
     upcode_map = [
-        # TRUE upcoding: Simple wellness procedures billed as complex
-        ("Weight check",           "Annual wellness exam",          "wellness"),
-        ("Venipuncture",           "IV catheter placement",         "wellness"),
-        ("Urinalysis",             "Comprehensive metabolic panel", "wellness"),
-        ("Ear cytology",           "Ear cytology and flush",        "dental"),
+        # (visit reason on claim,        billed service)
+        ("Weight recheck only",          "Annual wellness exam"),
+        ("Nail trim visit",              "Comprehensive dental cleaning"),
+        ("Routine urine screening",      "Comprehensive metabolic panel"),
+        ("Suture removal visit",         "Ultrasound abdomen complete"),
+        ("Weight recheck only",          "Radiograph series (3+ views)"),
+        ("Routine urine screening",      "Kidney function test"),
     ]
-    
+
     for i in range(60):
         species, breed = pick_species_breed()
-        simple_proc, billed_proc, diag_key = upcode_map[i % len(upcode_map)]
-        diagnosis = random.choice(DIAGNOSES[diag_key])
-        billed = round(PROCEDURE_RATES.get(billed_proc, 100) * 1.15, 2)
+        diagnosis, billed_proc = upcode_map[i % len(upcode_map)]
+        billed = round(PROCEDURE_RATES.get(billed_proc, 100) * 1.1, 2)
         claims.append(make_claim(nid(), species, breed, diagnosis,
                                  [billed_proc], "Upcoding", True,
                                  billed_override=billed))
@@ -242,15 +262,27 @@ def generate_claims():
                                  billed_override=billed))
 
     # 8. VACCINE PADDING (60)
-    for _ in range(60):
-        species, breed = pick_species_breed()
+    # Species-coherent vaccines with an observable trace of padding:
+    #  (a) duplicate administration of the same vaccine in one visit,
+    #  (b) a vaccine series billed alongside its own component, or
+    #  (c) species-inappropriate vaccine stacked on (caught by species rules).
+    CANINE = ["DHPP vaccine", "Bordetella bronchiseptica vaccine (canine)"]
+    FELINE = ["Feline leukemia vaccine", "Feline panleukopenia vaccine"]
+    for i in range(60):
+        species = random.choice(["dog", "cat"])
+        breed = random.choice(SPECIES_BREEDS[species]["breeds"])
         diagnosis = random.choice(DIAGNOSES["wellness"])
+        valid = CANINE if species == "dog" else FELINE
         base = ["Annual wellness exam", "Rabies vaccine"]
-        padding = random.sample([
-            "DHPP vaccine", "Bordetella bronchiseptica vaccine (canine)",
-            "Feline leukemia vaccine", "Core vaccine series",
-            "Feline panleukopenia vaccine"
-        ], k=random.randint(2, 3))
+        mode = i % 3
+        if mode == 0:      # duplicate same vaccine
+            v = random.choice(valid)
+            padding = [v, v]
+        elif mode == 1:    # series + its own component
+            padding = ["Core vaccine series", random.choice(valid)]
+        else:              # cross-species vaccine stacked on
+            wrong = random.choice(FELINE if species == "dog" else CANINE)
+            padding = [random.choice(valid), wrong]
         procs = base + padding
         billed = round(sum(PROCEDURE_RATES.get(p, 30) for p in procs) * 1.15, 2)
         claims.append(make_claim(nid(), species, breed, diagnosis,

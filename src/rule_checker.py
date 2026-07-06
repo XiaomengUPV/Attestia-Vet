@@ -1,8 +1,9 @@
 """
-VetGuard — Agent 1: Rule Checker
-Deterministic fraud detection ONLY for:
+Attestia Vet — Agent 1: Rule Checker
+Deterministic fraud detection for:
 - Duplicate billing
-- Unbundling  
+- Unbundling            (knowledge_base/bundle_rules.json)
+- Species mismatch      (knowledge_base/species_procedure_rules.json)
 - Modifier abuse
 """
 
@@ -10,10 +11,16 @@ import json
 from pathlib import Path
 
 # Load knowledge bases
-BUNDLE_RULES_PATH = Path(__file__).parent.parent / "knowledge_base" / "bundle_rules.json"
+KB = Path(__file__).parent.parent / "knowledge_base"
 
-with open(BUNDLE_RULES_PATH, "r", encoding="utf-8") as f:
+with open(KB / "bundle_rules.json", "r", encoding="utf-8") as f:
     BUNDLE_RULES = json.load(f)
+
+with open(KB / "species_procedure_rules.json", "r", encoding="utf-8") as f:
+    SPECIES_RULES = json.load(f)
+
+with open(KB / "species_exceptions.json", "r", encoding="utf-8") as f:
+    SPECIES_EXCEPTIONS = json.load(f)
 
 
 def check_duplicate_billing(procedures: list) -> tuple:
@@ -34,6 +41,39 @@ def check_unbundling(procedures: list) -> tuple:
         proc2 = rule["procedure_2"]
         if proc1 in procedures and proc2 in procedures:
             return (True, "Unbundling", f"'{proc1}' and '{proc2}' billed together — {rule['rule']}")
+    return (False, None, None)
+
+
+def _exception_possible(proc_lower: str, species_lower: str) -> bool:
+    """True when the species-exceptions KB documents a legitimate scenario
+    for this procedure+species — those cases are escalated to the clinical
+    reasoner (Agent 2) instead of being hard-flagged."""
+    for exc in SPECIES_EXCEPTIONS:
+        if exc["procedure"].lower() in proc_lower and \
+           species_lower in [x.lower() for x in exc.get("species", [])]:
+            return True
+    return False
+
+
+def check_species_mismatch(species: str, procedures: list) -> tuple:
+    """
+    Check procedures against the species-validity knowledge base.
+
+    Hard-flags only UNAMBIGUOUS violations (no documented exception exists).
+    Where the knowledge bases conflict — the species rules forbid it but the
+    exceptions KB documents a legitimate specialist scenario — the claim is
+    passed to Agent 2, whose tools include the whitelist, to adjudicate.
+    """
+    species_lower = (species or "").lower()
+    for proc in procedures:
+        proc_lower = proc.lower()
+        for rule in SPECIES_RULES:
+            if rule["procedure"].lower() in proc_lower:
+                if species_lower in [s.lower() for s in rule.get("invalid_species", [])]:
+                    if _exception_possible(proc_lower, species_lower):
+                        return (False, None, None)   # escalate to Agent 2
+                    return (True, "Species mismatch",
+                            f"'{proc}' billed for a {species} — {rule['rule']}")
     return (False, None, None)
 
 
@@ -79,7 +119,21 @@ def run(claim: dict) -> dict:
             "pass_to_agent2": False
         }
     
-    # 3. Modifier abuse
+    # 3. Species mismatch (knowledge-base rule)
+    fraud, fraud_type, explanation = check_species_mismatch(claim.get("species",""), claim["procedures"])
+    if fraud:
+        return {
+            "claim_id": claim["claim_id"],
+            "agent": "rule_checker",
+            "fraud_detected": True,
+            "fraud_type": fraud_type,
+            "confidence": "high",
+            "explanation": explanation,
+            "rule_cited": explanation,
+            "pass_to_agent2": False
+        }
+
+    # 4. Modifier abuse
     fraud, fraud_type, explanation = check_modifier_abuse(claim)
     if fraud:
         return {
