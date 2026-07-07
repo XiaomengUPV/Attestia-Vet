@@ -1,0 +1,90 @@
+{
+  "Duplicate billing": {
+    "tp": 38,
+    "fp": 0,
+    "fn": 12,
+    "precision": 1.0,
+    "recall": 0.76,
+    "f1": 0.864
+  },
+  "Unbundling": {
+    "tp": 60,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+  },
+  "Upcoding": {
+    "tp": 28,
+    "fp": 0,
+    "fn": 32,
+    "precision": 1.0,
+    "recall": 0.467,
+    "f1": 0.636
+  },
+  "Phantom billing": {
+    "tp": 57,
+    "fp": 1,
+    "fn": 3,
+    "precision": 0.983,
+    "recall": 0.95,
+    "f1": 0.966
+  },
+  "Diagnosis mismatch": {
+    "tp": 60,
+    "fp": 37,
+    "fn": 0,
+    "precision": 0.619,
+    "recall": 1.0,
+    "f1": 0.764
+  },
+  "Species mismatch": {
+    "tp": 50,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+  },
+  "Vaccine padding": {
+    "tp": 59,
+    "fp": 12,
+    "fn": 1,
+    "precision": 0.831,
+    "recall": 0.983,
+    "f1": 0.901
+  },
+  "Modifier abuse": {
+    "tp": 60,
+    "fp": 0,
+    "fn": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+  },
+  "_overall": {
+    "tp": 455,
+    "fp": 7,
+    "fn": 5,
+    "tn": 193,
+    "precision": 0.985,
+    "recall": 0.989,
+    "f1": 0.987,
+    "accuracy": 0.982,
+    "scored_claims": 660,
+    "indeterminate_claims": 0,
+    "total_claims": 660,
+    "coverage": 1.0
+  },
+  "_decision_status": {
+    "clean": 198,
+    "fraud": 462
+  },
+  "_agent_attribution": {
+    "clinical_reasoner": 193,
+    "rule_checker": 260,
+    "adversarial_validator": 207
+  },
+  "_indeterminate_by_ground_truth": {}
+}
