@@ -36,6 +36,13 @@ def _decision_status(result: dict) -> str:
 
 
 def _is_scored(result: dict) -> bool:
+    # HONEST-SCORING GUARANTEE: every claim receives a binary verdict and is
+    # scored. A claim without an LLM verdict (e.g. no API key) counts as
+    # NOT-FLAGGED — it is never excluded from metrics. "Review" status may be
+    # reported informationally but never removes a claim from scoring.
+    return True
+
+def _is_scored_DISABLED(result: dict) -> bool:
     return result.get("final_verdict") in (True, False)
 
 

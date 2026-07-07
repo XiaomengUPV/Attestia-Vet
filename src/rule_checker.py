@@ -100,6 +100,43 @@ def check_species_mismatch(species: str, procedures: list) -> tuple:
     return (False, None, None)
 
 
+VACCINE_KEYWORDS = ("vaccine", "vaccination", "immunization")
+
+def _is_vaccine(proc: str) -> bool:
+    return any(k in proc.lower() for k in VACCINE_KEYWORDS)
+
+
+def check_vaccine_padding(claim: dict) -> tuple:
+    """
+    Deterministic vaccine-padding signals (general veterinary billing logic):
+      (a) the same vaccine billed more than once in a single visit;
+      (b) a vaccine series billed alongside one of its own components.
+    Species-inappropriate vaccines are already covered by the species check.
+    """
+    from collections import Counter
+    vaccines = [p for p in claim.get("procedures", []) if _is_vaccine(p)]
+    if len(vaccines) < 2:
+        return (False, None, None)
+
+    counts = Counter(v.lower() for v in vaccines)
+    for name, n in counts.items():
+        if n > 1:
+            return (True, "Vaccine padding",
+                    f"'{name}' billed {n} times in a single visit — repeat "
+                    f"administration of the same vaccine in one encounter is "
+                    f"not a legitimate immunization protocol.")
+
+    lower = [v.lower() for v in vaccines]
+    if "core vaccine series" in lower:
+        components = [v for v in vaccines
+                      if v.lower() not in ("core vaccine series", "rabies vaccine")]
+        if components:
+            return (True, "Vaccine padding",
+                    f"Core vaccine series billed alongside '{components[0]}' — "
+                    f"the series already includes its component vaccines.")
+    return (False, None, None)
+
+
 def check_modifier_abuse(claim: dict) -> tuple:
     """Check if emergency modifier is applied to non-emergency diagnosis."""
     modifier = claim.get("modifier")
@@ -143,6 +180,20 @@ def run(claim: dict) -> dict:
             "pass_to_agent2": False
         }
     
+    # 3b. Vaccine padding (deterministic signals)
+    fraud, fraud_type, explanation = check_vaccine_padding(claim)
+    if fraud:
+        return {
+            "claim_id": claim["claim_id"],
+            "agent": "rule_checker",
+            "fraud_detected": True,
+            "fraud_type": fraud_type,
+            "confidence": "high",
+            "explanation": explanation,
+            "rule_cited": explanation,
+            "pass_to_agent2": False
+        }
+
     # 3. Species mismatch (knowledge-base rule)
     fraud, fraud_type, explanation = check_species_mismatch(claim.get("species",""), claim["procedures"])
     if fraud and not vaccine_padding_candidate:
