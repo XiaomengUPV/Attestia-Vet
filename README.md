@@ -398,7 +398,7 @@ default.
 
 ## Author
 
-Hazel Zhang
+Hazel Sun
 
 ## License
 
