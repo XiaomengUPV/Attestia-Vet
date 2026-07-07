@@ -585,15 +585,12 @@ The lessons learned here translate directly to:
 
 ## Author
 
-**Hazel Zhang**
+**Hazel Sun**
 
-Cornell University - Master's in Engineering Management (Aug 2025 - May 2026)
+Cornell University 
 
 Enterprise AI - Agentic AI - SAP - LLM Applications
 
-[LinkedIn](https://www.linkedin.com/in/hazelzhangupv) - [GitHub](https://github.com/XiaomengUPV)
-
----
 
 ## Acknowledgments
 
@@ -610,14 +607,3 @@ Developed as an independent research project exploring enterprise AI architectur
 ## License
 
 This project is for demonstration and educational purposes only. Contact the author for commercial licensing inquiries.
-
----
-
-## Get In Touch
-
-Interested in applying these patterns to financial services or lending fraud detection? I'd love to connect.
-
-**Hazel Zhang**  
-hazelzhang@cornell.edu  
-[LinkedIn](https://www.linkedin.com/in/hazelzhangupv)  
-[GitHub](https://github.com/XiaomengUPV)
