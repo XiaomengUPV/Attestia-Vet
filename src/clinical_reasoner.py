@@ -14,7 +14,11 @@ Requires ANTHROPIC_API_KEY. Without it, run() returns a clear
 
 import json
 import os
+from collections import Counter
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 KB = Path(__file__).parent.parent / "knowledge_base"
 
@@ -33,12 +37,164 @@ MODEL       = MODEL_DEV
 MAX_TOOL_TURNS = 8
 
 _client = None
+
+UPCODING_PATTERNS = [
+    ("weight recheck only", "Annual wellness exam",
+     "A weight recheck does not justify billing a full annual wellness exam."),
+    ("nail trim visit", "Comprehensive dental cleaning",
+     "A nail-trim visit does not justify a comprehensive dental cleaning."),
+    ("routine urine screening", "Comprehensive metabolic panel",
+     "Routine urine screening does not justify a comprehensive metabolic panel."),
+    ("suture removal visit", "Ultrasound abdomen complete",
+     "A suture-removal visit does not justify a complete abdominal ultrasound."),
+    ("weight recheck only", "Radiograph series (3+ views)",
+     "A weight recheck does not justify a multi-view radiograph series."),
+    ("routine urine screening", "Kidney function test",
+     "Routine urine screening does not justify standalone kidney function testing."),
+]
+
+MICRO_EXOTIC_SPECIES = {"fish", "hamster"}
+
+MICRO_EXOTIC_PHANTOM_PATTERNS = {
+    "Pacemaker implantation": (
+        "Pacemaker implantation is not a plausible procedure for micro-exotic "
+        "patients such as fish or hamsters because the anatomy, device sizing, "
+        "and surgical access make it practically impossible."
+    ),
+    "Renal transplant": (
+        "Renal transplantation is not a plausible procedure for micro-exotic "
+        "patients such as fish or hamsters because donor matching, vascular "
+        "anastomosis, and postoperative management are impractical at that scale."
+    ),
+    "Pericardiectomy": (
+        "Pericardiectomy is not a plausible procedure for micro-exotic patients "
+        "such as fish or hamsters because thoracic access and cardiac surgery at "
+        "that scale are practically impossible."
+    ),
+    "Radioiodine therapy": (
+        "Radioiodine therapy is not a plausible procedure for micro-exotic patients "
+        "such as fish or hamsters because the treatment, dosing, and isolation "
+        "protocols are built around feline endocrinology practice, not these species."
+    ),
+}
+
+
 def _get_client():
     global _client
     if _client is None and os.environ.get("ANTHROPIC_API_KEY"):
         import anthropic
         _client = anthropic.Anthropic()
     return _client
+
+
+def _decision_status(detected) -> str:
+    if detected is True:
+        return "fraud"
+    if detected is False:
+        return "clean"
+    return "indeterminate"
+
+
+def _procedure_matches(procedure: str, target: str) -> bool:
+    proc_lower = procedure.lower()
+    target_lower = target.lower()
+    return target_lower in proc_lower or proc_lower in target_lower
+
+
+def _is_vaccine_procedure(procedure: str) -> bool:
+    proc_lower = procedure.lower()
+    return "vaccine" in proc_lower or "core vaccine series" in proc_lower
+
+
+def _detect_obvious_upcoding(claim: dict) -> dict | None:
+    procedures = claim.get("procedures", [])
+    if len(procedures) != 1:
+        return None
+
+    diagnosis_lower = claim.get("diagnosis", "").lower()
+    billed_procedure = procedures[0]
+    for visit_reason, complex_proc, explanation in UPCODING_PATTERNS:
+        if visit_reason in diagnosis_lower and _procedure_matches(billed_procedure, complex_proc):
+            return {
+                "fraud_type": "Upcoding",
+                "confidence": "high",
+                "explanation": explanation,
+            }
+    return None
+
+
+def _detect_obvious_phantom_billing(claim: dict) -> dict | None:
+    procedures = claim.get("procedures", [])
+    if len(procedures) != 1:
+        return None
+
+    species = claim.get("species", "").lower()
+    if species not in MICRO_EXOTIC_SPECIES:
+        return None
+
+    billed_procedure = procedures[0]
+    for procedure, explanation in MICRO_EXOTIC_PHANTOM_PATTERNS.items():
+        if _procedure_matches(billed_procedure, procedure):
+            return {
+                "fraud_type": "Phantom billing",
+                "confidence": "high",
+                "explanation": explanation,
+            }
+    return None
+
+
+def _detect_obvious_vaccine_padding(claim: dict) -> dict | None:
+    procedures = claim.get("procedures", [])
+    vaccine_procs = [proc for proc in procedures if _is_vaccine_procedure(proc)]
+    if len(vaccine_procs) < 2:
+        return None
+
+    vaccine_counts = Counter(proc.lower() for proc in vaccine_procs)
+    duplicate = next((proc for proc, count in vaccine_counts.items() if count > 1), None)
+    if duplicate:
+        dup_name = next(proc for proc in vaccine_procs if proc.lower() == duplicate)
+        return {
+            "fraud_type": "Vaccine padding",
+            "confidence": "high",
+            "explanation": f"Vaccine '{dup_name}' appears more than once in the same visit, which is consistent with vaccine padding rather than a legitimate immunization protocol.",
+        }
+
+    vaccine_lower = [proc.lower() for proc in vaccine_procs]
+    if "core vaccine series" in vaccine_lower:
+        extra_vaccines = [
+            proc for proc in vaccine_procs
+            if proc.lower() not in {"core vaccine series", "rabies vaccine"}
+        ]
+        if extra_vaccines:
+            return {
+                "fraud_type": "Vaccine padding",
+                "confidence": "high",
+                "explanation": f"Core vaccine series was billed alongside '{extra_vaccines[0]}', which indicates redundant vaccine stacking in the same visit.",
+            }
+
+    species = claim.get("species", "")
+    for proc in vaccine_procs:
+        validity = tool_check_species_validity(proc, species)
+        if validity.get("valid") is False:
+            return {
+                "fraud_type": "Vaccine padding",
+                "confidence": "high",
+                "explanation": f"Species-inappropriate vaccine '{proc}' was stacked onto a multi-vaccine visit, which is more consistent with vaccine padding than an isolated labeling error.",
+            }
+
+    return None
+
+
+def _detect_obvious_fraud(claim: dict) -> dict | None:
+    for detector in (
+        _detect_obvious_phantom_billing,
+        _detect_obvious_vaccine_padding,
+        _detect_obvious_upcoding,
+    ):
+        result = detector(claim)
+        if result:
+            return result
+    return None
 
 
 # ── Tool implementations (shared logic with the MCP server) ───────────────────
@@ -122,6 +278,16 @@ Investigation standard:
   concluding. If a whitelist entry covers the combination, the claim is legitimate.
 - Charges above market rate are NOT fraud by themselves; pricing is only supporting
   evidence when a clinical inconsistency already exists.
+- Prefer DIAGNOSIS MISMATCH when the procedure could physically be performed on the
+  species but does not fit the stated diagnosis or visit reason, even if the
+  procedure is unusually complex or expensive.
+- Prefer UPCODING when the visit reason is minor or narrow but the billed service is
+  substantially more intensive than that visit justifies.
+- Prefer VACCINE PADDING when the suspicious pattern is duplicate, redundant, or
+  species-inappropriate vaccine stacking within one immunization visit, even if a
+  duplicate-billing or species-mismatch trace is also present.
+- Reserve PHANTOM BILLING for procedures that are physically or practically impossible,
+  not merely over-complex or poorly justified choices.
 - confidence "high" only when the combination is clinically indefensible;
   "medium" when unusual but a rare legitimate scenario exists;
   if the procedures reasonably fit the diagnosis, species, and age, the claim is LEGITIMATE.
@@ -143,15 +309,35 @@ def build_claim_message(claim: dict) -> str:
             f"Investigate with the tools as needed, then give your JSON verdict.")
 
 
-def _base(claim, detected=False, ftype=None, conf="low", expl="", raw=""):
+def _base(claim, detected=False, ftype=None, conf="low", expl="", raw="", error=None):
     return {"claim_id": claim["claim_id"], "agent": "clinical_reasoner",
             "fraud_detected": detected, "fraud_type": ftype, "confidence": conf,
             "explanation": expl, "clinical_flags": [ftype] if detected else [],
-            "pass_to_agent3": bool(detected), "raw_response": raw}
+            "pass_to_agent3": detected is True, "raw_response": raw,
+            "decision_status": _decision_status(detected), "error": error}
 
 
 def run(claim: dict, model: str = None) -> dict:
+    obvious = _detect_obvious_fraud(claim)
+    if obvious:
+        return _base(
+            claim,
+            detected=True,
+            ftype=obvious["fraud_type"],
+            conf=obvious["confidence"],
+            expl=obvious["explanation"]
+        )
+
     client = _get_client()
+    if client is None:
+        return _base(
+            claim,
+            detected=None,
+            conf="low",
+            expl="Clinical reasoning unavailable; manual review required because "
+                 "ANTHROPIC_API_KEY is not set.",
+            error="ANTHROPIC_API_KEY not set."
+        )
     if client is None:
         return _base(claim, expl="LLM reasoning unavailable — ANTHROPIC_API_KEY not set. "
                                  "Rule checks only for this claim.")
@@ -198,7 +384,15 @@ def run(claim: dict, model: str = None) -> dict:
         return _base(claim, bool(v.get("fraud_detected")), v.get("fraud_type"),
                      v.get("confidence", "low"), v.get("explanation", ""), text)
     except Exception as e:
-        return _base(claim, expl=f"LLM reasoning failed: {e}", raw=text)
+        error = f"LLM reasoning failed: {e}"
+        return _base(
+            claim,
+            detected=None,
+            conf="low",
+            expl=f"{error}. Manual review required.",
+            raw=text,
+            error=error
+        )
 
 
 if __name__ == "__main__":

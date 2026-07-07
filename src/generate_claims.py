@@ -130,29 +130,85 @@ def generate_claims():
     # rare-but-legitimate specialist care, covered by the species-exceptions KB
     # and adjudicated by the reasoning agents rather than hard rules.
     legit_scenarios = [
-        ("wellness",   ["Annual wellness exam", "Rabies vaccine", "DHPP vaccine"],
-                       ["dog"]),
-        ("wellness",   ["Annual wellness exam", "Rabies vaccine",
-                        "Feline leukemia vaccine"],
-                       ["cat"]),
-        ("dental",     ["Comprehensive dental cleaning", "General anesthesia"],
-                       ["dog", "cat", "rabbit"]),
-        ("oncology",   ["Chemotherapy", "Complete blood count panel"],
-                       ["dog", "dog", "cat", "cat", "bird", "reptile"]),
-        ("cardiac",    ["Echocardiogram complete", "Blood pressure measurement"],
-                       ["dog", "dog", "cat", "cat", "bird", "reptile"]),
-        ("endocrine",  ["Insulin therapy", "Comprehensive metabolic panel"],
-                       ["dog", "cat"]),
-        ("orthopedic", ["TPLO surgery", "General anesthesia",
-                        "Radiograph series (3+ views)"],
-                       ["dog", "dog", "dog", "cat"]),
+        {
+            "procedures": ["Annual wellness exam", "Rabies vaccine", "DHPP vaccine"],
+            "valid_species": ["dog"],
+            "diagnoses": DIAGNOSES["wellness"],
+        },
+        {
+            "procedures": ["Annual wellness exam", "Rabies vaccine", "Feline leukemia vaccine"],
+            "valid_species": ["cat"],
+            "diagnoses": DIAGNOSES["wellness"],
+        },
+        {
+            "procedures": ["Comprehensive dental cleaning", "General anesthesia"],
+            "valid_species": ["dog", "cat", "rabbit"],
+            "diagnoses": DIAGNOSES["dental"],
+        },
+        {
+            "procedures": ["Chemotherapy", "Complete blood count panel"],
+            "valid_species": ["dog", "dog", "cat", "cat"],
+            "diagnoses": ["Lymphoma", "Mast cell tumor"],
+        },
+        {
+            "procedures": ["Chemotherapy", "Complete blood count panel"],
+            "valid_species": ["bird", "reptile"],
+            "diagnoses_by_species": {
+                "bird": ["Lymphoma", "Mast cell tumor", "Splenic mass"],
+                "reptile": ["Lymphoma", "Mast cell tumor", "Splenic mass"],
+            },
+        },
+        {
+            "procedures": ["Echocardiogram complete", "Blood pressure measurement"],
+            "valid_species": ["dog", "dog", "cat", "cat"],
+            "diagnoses": DIAGNOSES["cardiac"],
+        },
+        {
+            "procedures": ["Echocardiogram complete", "Blood pressure measurement"],
+            "valid_species": ["bird", "reptile"],
+            "diagnoses_by_species": {
+                "bird": [
+                    "Dilated cardiomyopathy",
+                    "Pericardial effusion",
+                    "Mitral valve disease",
+                    "Heart murmur",
+                ],
+                "reptile": [
+                    "Dilated cardiomyopathy",
+                    "Pericardial effusion",
+                    "Mitral valve disease",
+                    "Heart murmur",
+                ],
+            },
+        },
+        {
+            "procedures": ["Insulin therapy", "Comprehensive metabolic panel"],
+            "valid_species": ["dog", "cat"],
+            "diagnoses": ["Diabetes mellitus"],
+        },
+        {
+            "procedures": ["TPLO surgery", "General anesthesia", "Radiograph series (3+ views)"],
+            "valid_species": ["dog", "dog", "dog", "cat"],
+            "diagnoses": ["Cranial cruciate ligament rupture"],
+        },
     ]
     for _ in range(200):
-        diag_key, procs, valid_species = random.choice(legit_scenarios)
-        species = random.choice(valid_species)
+        scenario = random.choice(legit_scenarios)
+        species = random.choice(scenario["valid_species"])
         breed = random.choice(SPECIES_BREEDS[species]["breeds"])
-        diagnosis = random.choice(DIAGNOSES[diag_key])
-        claims.append(make_claim(nid(), species, breed, diagnosis, procs, None, False))
+        diagnoses = scenario.get("diagnoses_by_species", {}).get(species, scenario.get("diagnoses", []))
+        diagnosis = random.choice(diagnoses)
+        claims.append(
+            make_claim(
+                nid(),
+                species,
+                breed,
+                diagnosis,
+                scenario["procedures"],
+                None,
+                False,
+            )
+        )
 
     # 2. DUPLICATE BILLING (50)
     for _ in range(50):
@@ -207,18 +263,20 @@ def generate_claims():
                                  billed_override=billed))
 
     # 5. PHANTOM BILLING (60)
+    # These are anatomically or practically impossible procedures on tiny exotic
+    # species, but they are NOT duplicated from the species-rule KB. That keeps
+    # Phantom billing distinct from Agent 1's hard Species mismatch label.
     phantom_scenarios = [
-        ("hamster", "MRI brain scan",          "orthopedic"),
-        ("fish",    "MRI brain scan",          "orthopedic"),
-        ("fish",    "General anesthesia",      "wellness"),
-        ("bird",    "Canine heartworm test",   "wellness"),
-        ("hamster", "TPLO surgery",            "orthopedic"),
-        ("reptile", "Echocardiogram complete", "cardiac"),
+        ("fish",    "Pacemaker implantation", "Heart block"),
+        ("fish",    "Renal transplant",       "End-stage renal failure"),
+        ("fish",    "Pericardiectomy",        "Cardiac tamponade"),
+        ("hamster", "Pacemaker implantation", "Arrhythmia"),
+        ("hamster", "Renal transplant",       "End-stage renal failure"),
+        ("hamster", "Radioiodine therapy",    "Thyroid nodule"),
     ]
     for i in range(60):
-        sp, proc, diag_key = phantom_scenarios[i % len(phantom_scenarios)]
+        sp, proc, diagnosis = phantom_scenarios[i % len(phantom_scenarios)]
         breed = random.choice(SPECIES_BREEDS[sp]["breeds"])
-        diagnosis = random.choice(DIAGNOSES[diag_key])
         billed = round(PROCEDURE_RATES.get(proc, 200) * 1.05, 2)
         claims.append(make_claim(nid(), sp, breed, diagnosis,
                                  [proc], "Phantom billing", True,
@@ -226,16 +284,43 @@ def generate_claims():
 
     # 6. DIAGNOSIS MISMATCH (60)
     mismatch_scenarios = [
-        (["Chemotherapy CHOP protocol"], "Routine wellness"),
-        (["Amputation"],                 "Annual health check"),
-        (["Splenectomy"],                "Preventive care visit"),
-        (["Pacemaker implantation"],     "Routine wellness"),
-        (["Renal transplant"],           "Annual health check"),
-        (["TPLO surgery"],               "Routine wellness"),
+        {
+            "procedures": ["Chemotherapy CHOP protocol"],
+            "diagnosis": "Routine wellness",
+            "valid_species": ["dog", "cat"],
+        },
+        {
+            "procedures": ["Amputation"],
+            "diagnosis": "Annual health check",
+            "valid_species": ["dog", "cat"],
+        },
+        {
+            "procedures": ["Splenectomy"],
+            "diagnosis": "Preventive care visit",
+            "valid_species": ["dog", "cat"],
+        },
+        {
+            "procedures": ["Pacemaker implantation"],
+            "diagnosis": "Routine wellness",
+            "valid_species": ["dog"],
+        },
+        {
+            "procedures": ["Renal transplant"],
+            "diagnosis": "Annual health check",
+            "valid_species": ["cat"],
+        },
+        {
+            "procedures": ["TPLO surgery"],
+            "diagnosis": "Routine wellness",
+            "valid_species": ["dog"],
+        },
     ]
     for i in range(60):
-        species, breed = pick_species_breed()
-        procs, diagnosis = mismatch_scenarios[i % len(mismatch_scenarios)]
+        scenario = mismatch_scenarios[i % len(mismatch_scenarios)]
+        species = random.choice(scenario["valid_species"])
+        breed = random.choice(SPECIES_BREEDS[species]["breeds"])
+        procs = scenario["procedures"]
+        diagnosis = scenario["diagnosis"]
         billed = round(sum(PROCEDURE_RATES.get(p, 500) for p in procs) * 1.05, 2)
         claims.append(make_claim(nid(), species, breed, diagnosis,
                                  procs, "Diagnosis mismatch", True,

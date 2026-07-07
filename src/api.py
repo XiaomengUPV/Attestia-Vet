@@ -66,6 +66,7 @@ def analyze():
             "fraud_detected": True,
             "fraud_type": a1["fraud_type"],
             "confidence": "high",
+            "decision_status": "fraud",
             "deciding_agent": "Rule Checker",
             "explanation": a1["explanation"],
             "steps": steps
@@ -79,15 +80,29 @@ def analyze():
         "fraud_detected": a2["fraud_detected"],
         "fraud_type": a2.get("fraud_type"),
         "confidence": a2.get("confidence", "low"),
+        "decision_status": a2.get("decision_status"),
         "explanation": a2.get("explanation", ""),
-        "clinical_flags": a2.get("clinical_flags", [])
+        "clinical_flags": a2.get("clinical_flags", []),
+        "error": a2.get("error")
     })
 
-    if not a2["fraud_detected"]:
+    if a2["fraud_detected"] is None:
+        return jsonify({
+            "fraud_detected": None,
+            "fraud_type": None,
+            "confidence": a2.get("confidence", "low"),
+            "decision_status": "indeterminate",
+            "deciding_agent": "Clinical Reasoner",
+            "explanation": a2.get("explanation", "Manual review required."),
+            "steps": steps
+        })
+
+    if a2["fraud_detected"] is False:
         return jsonify({
             "fraud_detected": False,
             "fraud_type": None,
             "confidence": "high",
+            "decision_status": "clean",
             "deciding_agent": "Clinical Reasoner",
             "explanation": "No fraud detected after clinical analysis.",
             "steps": steps
@@ -101,13 +116,28 @@ def analyze():
         "fraud_detected": a3["final_fraud_detected"],
         "override_applied": a3.get("override_applied", False),
         "whitelist_entry_cited": a3.get("whitelist_entry_cited"),
-        "explanation": a3.get("validator_explanation", "")
+        "decision_status": a3.get("decision_status"),
+        "explanation": a3.get("validator_explanation", ""),
+        "error": a3.get("error")
     })
+
+    if a3["final_fraud_detected"] is None:
+        return jsonify({
+            "fraud_detected": None,
+            "fraud_type": None,
+            "confidence": a2.get("confidence", "low"),
+            "decision_status": "indeterminate",
+            "deciding_agent": "Adversarial Validator",
+            "override_applied": False,
+            "explanation": a3.get("validator_explanation", "Manual review required."),
+            "steps": steps
+        })
 
     return jsonify({
         "fraud_detected": a3["final_fraud_detected"],
         "fraud_type": a2["fraud_type"] if a3["final_fraud_detected"] else None,
         "confidence": a2["confidence"],
+        "decision_status": "fraud" if a3["final_fraud_detected"] else "clean",
         "deciding_agent": "Adversarial Validator",
         "override_applied": a3.get("override_applied", False),
         "explanation": a3.get("validator_explanation", ""),
@@ -149,6 +179,7 @@ def analyze_pdf():
             "final_verdict": agent0_result["fraud_detected"],
             "final_fraud_type": agent0_result.get("fraud_type"),
             "deciding_agent": "document_integrity_checker" if agent0_result["fraud_detected"] else None,
+            "decision_status": "fraud" if agent0_result["fraud_detected"] else "pending",
         }
 
         # Short-circuit on CRITICAL
@@ -180,22 +211,40 @@ def analyze_pdf():
             steps.append(a2)
             response["agent2_result"] = a2
 
-            if a2["fraud_detected"]:
+            if a2["fraud_detected"] is None:
+                response["final_verdict"] = None
+                response["final_fraud_type"] = None
+                response["deciding_agent"] = "clinical_reasoner"
+                response["decision_status"] = "indeterminate"
+            elif a2["fraud_detected"]:
                 a3 = adversarial_validator.run(claim_stub, a2)
                 steps.append(a3)
                 response["agent3_result"] = a3
 
-                if a3["final_fraud_detected"]:
+                if a3["final_fraud_detected"] is None:
+                    response["final_verdict"] = None
+                    response["final_fraud_type"] = None
+                    response["deciding_agent"] = "adversarial_validator"
+                    response["decision_status"] = "indeterminate"
+                elif a3["final_fraud_detected"]:
                     response["final_verdict"] = True
                     response["final_fraud_type"] = a2.get("fraud_type")
                     response["deciding_agent"] = "adversarial_validator"
+                    response["decision_status"] = "fraud"
+                else:
+                    response["final_verdict"] = False
+                    response["final_fraud_type"] = None
+                    response["deciding_agent"] = "adversarial_validator"
+                    response["decision_status"] = "clean"
             else:
                 if not response["final_verdict"]:
                     response["deciding_agent"] = "clinical_reasoner"
+                    response["decision_status"] = "clean"
         else:
             response["final_verdict"] = True
             response["final_fraud_type"] = a1.get("fraud_type")
             response["deciding_agent"] = "rule_checker"
+            response["decision_status"] = "fraud"
 
         return jsonify(response)
 

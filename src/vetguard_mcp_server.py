@@ -284,6 +284,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 "fraud_detected": True,
                 "fraud_type": a1["fraud_type"],
                 "confidence": "high",
+                "decision_status": "fraud",
                 "deciding_agent": "rule_checker",
                 "explanation": a1["explanation"],
                 "audit_trail": [{"agent": "rule_checker", "result": a1}]
@@ -293,10 +294,26 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         # Run Agent 2
         a2 = clinical_reasoner.run(claim)
 
-        if not a2["fraud_detected"]:
+        if a2["fraud_detected"] is None:
+            result = {
+                "fraud_detected": None,
+                "fraud_type": None,
+                "confidence": a2.get("confidence", "low"),
+                "decision_status": "indeterminate",
+                "deciding_agent": "clinical_reasoner",
+                "explanation": a2.get("explanation", "Manual review required."),
+                "audit_trail": [
+                    {"agent": "rule_checker", "result": a1},
+                    {"agent": "clinical_reasoner", "result": a2}
+                ]
+            }
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        if a2["fraud_detected"] is False:
             result = {
                 "fraud_detected": False,
                 "fraud_type": None,
+                "decision_status": "clean",
                 "deciding_agent": "clinical_reasoner",
                 "explanation": "No fraud detected by clinical reasoning",
                 "audit_trail": [
@@ -309,10 +326,29 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         # Run Agent 3
         a3 = adversarial_validator.run(claim, a2)
 
+        if a3["final_fraud_detected"] is None:
+            result = {
+                "fraud_detected": None,
+                "fraud_type": None,
+                "confidence": a2.get("confidence", "low"),
+                "decision_status": "indeterminate",
+                "deciding_agent": "adversarial_validator",
+                "override_applied": False,
+                "whitelist_entry_cited": a3.get("whitelist_entry_cited"),
+                "explanation": a3.get("validator_explanation", "Manual review required."),
+                "audit_trail": [
+                    {"agent": "rule_checker", "result": a1},
+                    {"agent": "clinical_reasoner", "result": a2},
+                    {"agent": "adversarial_validator", "result": a3}
+                ]
+            }
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
         result = {
             "fraud_detected": a3["final_fraud_detected"],
             "fraud_type": a2["fraud_type"] if a3["final_fraud_detected"] else None,
             "confidence": a2["confidence"],
+            "decision_status": "fraud" if a3["final_fraud_detected"] else "clean",
             "deciding_agent": "adversarial_validator",
             "override_applied": a3["override_applied"],
             "whitelist_entry_cited": a3.get("whitelist_entry_cited"),

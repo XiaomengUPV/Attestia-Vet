@@ -34,6 +34,7 @@ def process_claim(claim: dict, model: str = None, verbose: bool = False) -> dict
                 "final_verdict": True,
                 "final_fraud_type": doc["fraud_type"],
                 "deciding_agent": "document_integrity_checker",
+                "decision_status": "fraud",
                 "processing_time_ms": round((time.time() - t_start) * 1000, 1),
             }
 
@@ -57,9 +58,10 @@ def process_claim(claim: dict, model: str = None, verbose: bool = False) -> dict
         "agent1_result": trail.get("rule_checker"),
         "agent2_result": trail.get("clinical_reasoner"),
         "agent3_result": trail.get("adversarial_validator"),
-        "final_verdict": bool(g.get("fraud_detected")),
-        "final_fraud_type": g.get("fraud_type") if g.get("fraud_detected") else None,
+        "final_verdict": g.get("fraud_detected"),
+        "final_fraud_type": g.get("fraud_type") if g.get("fraud_detected") is True else None,
         "deciding_agent": g.get("deciding_agent"),
+        "decision_status": g.get("decision_status", "indeterminate"),
         "errors": g.get("errors") or [],
         "audit_trail": g.get("audit_trail", []),
         "processing_time_ms": round((time.time() - t_start) * 1000, 1),

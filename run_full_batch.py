@@ -53,11 +53,13 @@ def main():
         pct = count / len(results) * 100
         print(f"  {agent}: {count} claims ({pct:.1f}%)")
     
-    # Count fraud vs legitimate
-    fraud_count = sum(1 for r in results if r.get("final_verdict", False))
-    legit_count = len(results) - fraud_count
+    # Count fraud vs legitimate vs indeterminate
+    fraud_count = sum(1 for r in results if r.get("final_verdict") is True)
+    legit_count = sum(1 for r in results if r.get("final_verdict") is False)
+    indeterminate_count = sum(1 for r in results if r.get("final_verdict") is None)
     print(f"\n  Fraud detected: {fraud_count}")
     print(f"  Legitimate: {legit_count}")
+    print(f"  Indeterminate: {indeterminate_count}")
 
 if __name__ == "__main__":
     main()

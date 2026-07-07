@@ -145,7 +145,7 @@ if page == "🔍 Live Demo":
                     ms2 = round((time.time() - t0) * 1000, 1)
 
                 conf_icon = CONFIDENCE_COLORS.get(a2["confidence"], "⚪")
-                if a2["fraud_detected"]:
+                if a2["fraud_detected"] is True:
                     st.warning(f"{conf_icon} **{a2['fraud_type']}** suspected "
                                f"(confidence: {a2['confidence']}, {ms2}ms)")
                     st.write(a2["explanation"])
@@ -157,7 +157,12 @@ if page == "🔍 Live Demo":
                 with st.expander("Raw Claude response"):
                     st.code(a2.get("raw_response", ""), language="json")
 
-            if not a2["fraud_detected"]:
+            if a2["fraud_detected"] is None:
+                st.warning("### Manual Review Required")
+                st.caption("Clinical Reasoner could not produce a verdict.")
+                st.stop()
+
+            if a2["fraud_detected"] is False:
                 st.success("### ✅ Final Verdict: **Legitimate claim**")
                 st.caption("Decided by: Clinical Reasoner")
                 st.stop()
@@ -181,7 +186,10 @@ if page == "🔍 Live Demo":
                     st.code(a3.get("raw_response", ""), language="json")
 
             # ── Final verdict ──
-            if a3["final_fraud_detected"]:
+            if a3["final_fraud_detected"] is None:
+                st.warning("### Manual Review Required")
+                st.caption("Adversarial Validator could not complete the review.")
+            elif a3["final_fraud_detected"]:
                 st.error(f"### 🚨 Final Verdict: **{a2['fraud_type']}**")
             else:
                 st.success("### ✅ Final Verdict: **Legitimate claim** (override applied)")
@@ -208,7 +216,13 @@ elif page == "📊 Performance":
     c1.metric("Overall F1", f"{overall['f1']:.3f}")
     c2.metric("Precision", f"{overall['precision']:.3f}")
     c3.metric("Recall", f"{overall['recall']:.3f}")
-    c4.metric("Claims Evaluated", len(results))
+    c4.metric("Scored Claims", overall.get("scored_claims", len(results)))
+
+    st.caption(
+        f"Coverage: {overall.get('coverage', 0):.3f} | "
+        f"Indeterminate: {overall.get('indeterminate_claims', 0)} of "
+        f"{overall.get('total_claims', len(results))}"
+    )
 
     st.markdown("---")
 
@@ -275,33 +289,43 @@ elif page == "📋 Audit Log":
     # Filters
     col1, col2, col3 = st.columns(3)
     with col1:
-        filter_verdict = st.selectbox("Verdict", ["All", "Fraud", "Legitimate"])
+        filter_verdict = st.selectbox("Verdict", ["All", "Fraud", "Legitimate", "Indeterminate"])
     with col2:
         filter_agent = st.selectbox("Deciding Agent",
                                      ["All", "rule_checker", "clinical_reasoner", "adversarial_validator"])
     with col3:
-        filter_correct = st.selectbox("Correctness", ["All", "Correct", "Incorrect"])
+        filter_correct = st.selectbox("Correctness", ["All", "Correct", "Incorrect", "Indeterminate"])
 
     filtered = results
     if filter_verdict == "Fraud":
-        filtered = [r for r in filtered if r["final_verdict"]]
+        filtered = [r for r in filtered if r["final_verdict"] is True]
     elif filter_verdict == "Legitimate":
-        filtered = [r for r in filtered if not r["final_verdict"]]
+        filtered = [r for r in filtered if r["final_verdict"] is False]
+    elif filter_verdict == "Indeterminate":
+        filtered = [r for r in filtered if r["final_verdict"] is None]
 
     if filter_agent != "All":
         filtered = [r for r in filtered if r.get("deciding_agent") == filter_agent]
 
     if filter_correct == "Correct":
-        filtered = [r for r in filtered if r["final_verdict"] == r["ground_truth_fraud"]]
+        filtered = [
+            r for r in filtered
+            if r["final_verdict"] is not None and r["final_verdict"] == r["ground_truth_fraud"]
+        ]
     elif filter_correct == "Incorrect":
-        filtered = [r for r in filtered if r["final_verdict"] != r["ground_truth_fraud"]]
+        filtered = [
+            r for r in filtered
+            if r["final_verdict"] is not None and r["final_verdict"] != r["ground_truth_fraud"]
+        ]
+    elif filter_correct == "Indeterminate":
+        filtered = [r for r in filtered if r["final_verdict"] is None]
 
     st.caption(f"Showing {len(filtered)} of {len(results)} claims")
 
     for r in filtered[:50]:  # Show max 50
-        correct = r["final_verdict"] == r["ground_truth_fraud"]
-        icon = "✅" if correct else "❌"
-        verdict_label = r["final_fraud_type"] or "Legitimate"
+        correct = None if r["final_verdict"] is None else r["final_verdict"] == r["ground_truth_fraud"]
+        icon = "🟡" if correct is None else ("✅" if correct else "❌")
+        verdict_label = "Indeterminate" if r["final_verdict"] is None else (r["final_fraud_type"] or "Legitimate")
         gt_label = r["ground_truth_type"] or "Legitimate"
 
         with st.expander(
@@ -325,11 +349,17 @@ elif page == "📋 Audit Log":
                     st.write(f"Agent 1: {'🚨 ' + a1['fraud_type'] if a1['fraud_detected'] else '✅ Clean'}")
                 a2 = r.get("agent2_result", {})
                 if a2:
-                    st.write(f"Agent 2: {'🚨 ' + str(a2.get('fraud_type')) if a2.get('fraud_detected') else '✅ Clean'} "
-                             f"({a2.get('confidence', '')})")
+                    if a2.get("fraud_detected") is None:
+                        st.write(f"Agent 2: 🟡 Manual review ({a2.get('confidence', '')})")
+                    else:
+                        st.write(f"Agent 2: {'🚨 ' + str(a2.get('fraud_type')) if a2.get('fraud_detected') else '✅ Clean'} "
+                                 f"({a2.get('confidence', '')})")
                 a3 = r.get("agent3_result", {})
                 if a3:
-                    override = "⚖️ Override applied" if a3.get("override_applied") else "🚨 Upheld"
+                    if a3.get("final_fraud_detected") is None:
+                        override = "🟡 Review incomplete"
+                    else:
+                        override = "⚖️ Override applied" if a3.get("override_applied") else "🚨 Upheld"
                     st.write(f"Agent 3: {override}")
 
             if r.get("agent2_result", {}).get("explanation"):

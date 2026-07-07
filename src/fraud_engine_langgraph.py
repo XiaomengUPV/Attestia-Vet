@@ -3,7 +3,7 @@ VetGuard — LangGraph Fraud Detection Agent
 Replaces fraud_engine.py with LangGraph StateGraph for better state management.
 """
 
-from typing import TypedDict, Annotated, List, Dict, Any
+from typing import TypedDict, Annotated, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 import operator
@@ -35,9 +35,10 @@ class VetGuardState(TypedDict):
     
     # Decision tracking
     current_agent: str
-    fraud_detected: bool
-    fraud_type: str
+    fraud_detected: Optional[bool]
+    fraud_type: Optional[str]
     deciding_agent: str
+    decision_status: str
     
     # Audit trail (accumulates over steps)
     audit_trail: Annotated[List[Dict], operator.add]
@@ -50,6 +51,23 @@ class VetGuardState(TypedDict):
 # ============================================================
 # Agent Nodes (Synchronous versions for simplicity)
 # ============================================================
+
+
+def _decision_status(detected) -> str:
+    if detected is True:
+        return "fraud"
+    if detected is False:
+        return "clean"
+    return "indeterminate"
+
+
+def _merge_errors(state: VetGuardState, result: Dict[str, Any]) -> List[str]:
+    errors = list(state.get("errors", []))
+    error = result.get("error")
+    if error and error not in errors:
+        errors.append(error)
+    return errors
+
 
 def rule_checker_node(state: VetGuardState) -> dict:
     """Node 1: Run deterministic rule checks."""
@@ -66,6 +84,7 @@ def rule_checker_node(state: VetGuardState) -> dict:
                 "timestamp": datetime.now().isoformat(),
                 "fraud_detected": result["fraud_detected"],
                 "fraud_type": result.get("fraud_type"),
+                "decision_status": _decision_status(result.get("fraud_detected")),
                 "explanation": result.get("explanation")
             }]
         }
@@ -92,7 +111,9 @@ def clinical_reasoner_node(state: VetGuardState) -> dict:
                 "fraud_detected": result["fraud_detected"],
                 "fraud_type": result.get("fraud_type"),
                 "confidence": result.get("confidence"),
-                "explanation": result.get("explanation")
+                "decision_status": result.get("decision_status"),
+                "explanation": result.get("explanation"),
+                "error": result.get("error")
             }]
         }
     except Exception as e:
@@ -118,7 +139,9 @@ def adversarial_validator_node(state: VetGuardState) -> dict:
                 "timestamp": datetime.now().isoformat(),
                 "override_applied": result.get("override_applied"),
                 "final_fraud_detected": result.get("final_fraud_detected"),
-                "explanation": result.get("validator_explanation")
+                "decision_status": result.get("decision_status"),
+                "explanation": result.get("validator_explanation"),
+                "error": result.get("error")
             }]
         }
     except Exception as e:
@@ -130,6 +153,53 @@ def adversarial_validator_node(state: VetGuardState) -> dict:
 
 def finalize_node(state: VetGuardState) -> dict:
     """Final node: Aggregate results into final verdict."""
+
+    if state.get("agent3_result"):
+        result = state["agent3_result"]
+        final = result.get("final_fraud_detected")
+        status = result.get("decision_status", _decision_status(final))
+        if final is None or status == "indeterminate":
+            return {
+                "fraud_detected": None,
+                "fraud_type": None,
+                "deciding_agent": "adversarial_validator",
+                "decision_status": "indeterminate",
+                "errors": _merge_errors(state, result)
+            }
+        return {
+            "fraud_detected": final,
+            "fraud_type": state["agent2_result"].get("fraud_type") if final else None,
+            "deciding_agent": "adversarial_validator",
+            "decision_status": status
+        }
+
+    if state.get("agent2_result"):
+        result = state["agent2_result"]
+        final = result.get("fraud_detected")
+        status = result.get("decision_status", _decision_status(final))
+        if final is None or status == "indeterminate":
+            return {
+                "fraud_detected": None,
+                "fraud_type": None,
+                "deciding_agent": "clinical_reasoner",
+                "decision_status": "indeterminate",
+                "errors": _merge_errors(state, result)
+            }
+        return {
+            "fraud_detected": final,
+            "fraud_type": state["agent2_result"].get("fraud_type") if final else None,
+            "deciding_agent": "clinical_reasoner",
+            "decision_status": status
+        }
+
+    if state.get("errors"):
+        return {
+            "fraud_detected": None,
+            "fraud_type": None,
+            "deciding_agent": state.get("current_agent") or "unknown",
+            "decision_status": "indeterminate",
+            "errors": state.get("errors", [])
+        }
 
     # Agent 3 ran — use its verdict
     if state.get("agent3_result"):
@@ -154,7 +224,8 @@ def finalize_node(state: VetGuardState) -> dict:
     return {
         "fraud_detected": final,
         "fraud_type": state.get("agent1_result", {}).get("fraud_type") if final else None,
-        "deciding_agent": "rule_checker"
+        "deciding_agent": "rule_checker",
+        "decision_status": _decision_status(final)
     }
 
 # ============================================================
@@ -174,9 +245,13 @@ def after_clinical_reasoner(state: VetGuardState) -> str:
     """Decide next step after clinical reasoner."""
     if state.get("errors"):
         return "finalize"
-    if not state.get("agent2_result", {}).get("fraud_detected"):
+    agent2_result = state.get("agent2_result", {})
+    if agent2_result.get("fraud_detected") is None or \
+       agent2_result.get("decision_status") == "indeterminate":
         return "finalize"
-    if state.get("agent2_result", {}).get("confidence") == "low":
+    if agent2_result.get("fraud_detected") is not True:
+        return "finalize"
+    if agent2_result.get("confidence") == "low":
         return "finalize"
     return "adversarial_validator"
 
@@ -271,9 +346,10 @@ class VetGuardAgent:
             "agent2_result": {},
             "agent3_result": {},
             "current_agent": "",
-            "fraud_detected": False,
+            "fraud_detected": None,
             "fraud_type": None,
             "deciding_agent": "",
+            "decision_status": "pending",
             "audit_trail": [],
             "errors": [],
             "retry_count": 0
@@ -288,9 +364,10 @@ class VetGuardAgent:
         # Build final result
         return {
             "claim_id": claim["claim_id"],
-            "fraud_detected": final_state.get("fraud_detected", False),
+            "fraud_detected": final_state.get("fraud_detected"),
             "fraud_type": final_state.get("fraud_type"),
             "deciding_agent": final_state.get("deciding_agent", "unknown"),
+            "decision_status": final_state.get("decision_status", "indeterminate"),
             "audit_trail": final_state.get("audit_trail", []),
             "errors": final_state.get("errors", [])
         }
@@ -306,9 +383,10 @@ class VetGuardAgent:
         final_state = self.graph.invoke(None, config=config)
         
         return {
-            "fraud_detected": final_state.get("fraud_detected", False),
+            "fraud_detected": final_state.get("fraud_detected"),
             "fraud_type": final_state.get("fraud_type"),
             "deciding_agent": final_state.get("deciding_agent", "unknown"),
+            "decision_status": final_state.get("decision_status", "indeterminate"),
             "audit_trail": final_state.get("audit_trail", [])
         }
 
@@ -355,9 +433,11 @@ def run_batch(claims: list, model: str = "claude-haiku-4-5-20251001",
             "agent1_result": raw.get("audit_trail", [{}])[0] if raw.get("audit_trail") else None,
             "agent2_result": raw.get("audit_trail", [{}, {}])[1] if len(raw.get("audit_trail", [])) > 1 else None,
             "agent3_result": raw.get("audit_trail", [{}, {}, {}])[2] if len(raw.get("audit_trail", [])) > 2 else None,
-            "final_verdict": raw.get("fraud_detected", False),
+            "final_verdict": raw.get("fraud_detected"),
             "final_fraud_type": raw.get("fraud_type"),
             "deciding_agent": raw.get("deciding_agent"),
+            "decision_status": raw.get("decision_status"),
+            "errors": raw.get("errors", []),
             "processing_time_ms": None
         })
 

@@ -23,6 +23,29 @@ with open(KB / "species_exceptions.json", "r", encoding="utf-8") as f:
     SPECIES_EXCEPTIONS = json.load(f)
 
 
+WELLNESS_MARKERS = ("wellness", "preventive", "health check")
+
+
+def _is_vaccine_procedure(procedure: str) -> bool:
+    proc_lower = procedure.lower()
+    return "vaccine" in proc_lower or "core vaccine series" in proc_lower
+
+
+def _looks_like_vaccine_padding_candidate(claim: dict) -> bool:
+    """True when the claim looks like a multi-vaccine wellness stack.
+
+    These claims are still fraudulent, but we let Agent 2 assign the more
+    specific 'Vaccine padding' label instead of short-circuiting as duplicate
+    billing, species mismatch, or unbundling.
+    """
+    procedures = claim.get("procedures", [])
+    vaccine_count = sum(1 for proc in procedures if _is_vaccine_procedure(proc))
+    diagnosis_lower = claim.get("diagnosis", "").lower()
+    has_wellness_context = any(marker in diagnosis_lower for marker in WELLNESS_MARKERS) or \
+        any("annual wellness exam" in proc.lower() for proc in procedures)
+    return vaccine_count >= 2 and has_wellness_context
+
+
 def check_duplicate_billing(procedures: list) -> tuple:
     """Check for duplicate procedures in the same claim."""
     seen = {}
@@ -90,10 +113,11 @@ def check_modifier_abuse(claim: dict) -> tuple:
 
 def run(claim: dict) -> dict:
     """Run rule checks. Only handles duplicate billing, unbundling, and modifier abuse."""
-    
+    vaccine_padding_candidate = _looks_like_vaccine_padding_candidate(claim)
+
     # 1. Duplicate billing
     fraud, fraud_type, explanation = check_duplicate_billing(claim["procedures"])
-    if fraud:
+    if fraud and not vaccine_padding_candidate:
         return {
             "claim_id": claim["claim_id"],
             "agent": "rule_checker",
@@ -107,7 +131,7 @@ def run(claim: dict) -> dict:
     
     # 2. Unbundling
     fraud, fraud_type, explanation = check_unbundling(claim["procedures"])
-    if fraud:
+    if fraud and not vaccine_padding_candidate:
         return {
             "claim_id": claim["claim_id"],
             "agent": "rule_checker",
@@ -121,7 +145,7 @@ def run(claim: dict) -> dict:
     
     # 3. Species mismatch (knowledge-base rule)
     fraud, fraud_type, explanation = check_species_mismatch(claim.get("species",""), claim["procedures"])
-    if fraud:
+    if fraud and not vaccine_padding_candidate:
         return {
             "claim_id": claim["claim_id"],
             "agent": "rule_checker",
